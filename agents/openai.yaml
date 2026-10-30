@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pedagogical Video Editor"
+  short_description: "Edit engaging long-form educational videos"
+  default_prompt: "Use $pedagogical-video-editor to analyse my footage and build an editable educational video project."
