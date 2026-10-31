@@ -37,8 +37,26 @@ def main() -> int:
         filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], text=True, capture_output=True, check=True).stdout
         if " drawtext " in filters:
             plan["cards"] = [{"start": 2.0, "end": 3.2, "text": "Idée clé : tester", "position": "lower", "reason": "test French"}]
+        # Source-time captions must be remapped when footage is cut.
+        (project / "transcript.srt").write_text(
+            "1\\n00:00:00,500 --> 00:00:01,300\\nBonjour\\n\\n"
+            "2\\n00:00:02,500 --> 00:00:03,500\\nUne idée clé\\n",
+            encoding="utf-8",
+        )
+        plan["captions"]["burn_in"] = " subtitles " in filters
         plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
         call(sys.executable, str(script), "render", "--project", str(project))
+        retimed = project / "edited_transcript.srt"
+        if not retimed.is_file():
+            raise RuntimeError("Edited transcript was not generated")
+        captions = retimed.read_text(encoding="utf-8")
+        if "00:00:02,200 --> 00:00:03,200" not in captions:
+            raise RuntimeError(f"Incorrect retimed caption: {captions}")
+        if "00:00:00,500 --> 00:00:01,300" not in captions:
+            raise RuntimeError(f"Incorrect first caption: {captions}")
+        call(sys.executable, str(script), "render", "--project", str(project), "--preview")
+        if not (project / "preview_manifest.json").is_file():
+            raise RuntimeError("Preview manifest missing")
         call(sys.executable, str(script), "qc", "--project", str(project))
         call(sys.executable, str(script), "export-fcpxml", "--project", str(project))
         required = ["analysis.json", "master.mp4", "qc_report.json", "timeline.fcpxml", "render_manifest.json"]
