@@ -253,6 +253,11 @@ def validate_plan(project: Path, plan: dict[str, Any], source_info: dict[str, An
     segments = plan.get("segments")
     if not isinstance(segments, list) or not segments:
         raise PipelineError("Plan needs at least one segment")
+    output = plan.get("output", {})
+    if not all(isinstance(output.get(k), (int, float)) and output[k] > 0 for k in ("width", "height", "fps")):
+        raise PipelineError("Output width, height, and fps must be positive numbers")
+    if int(output["width"]) % 2 or int(output["height"]) % 2:
+        raise PipelineError("Output width and height must be even for H.264 yuv420p")
     previous = -1.0
     total = 0.0
     for i, seg in enumerate(segments):
@@ -450,6 +455,56 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
     return cmd
 
 
+
+def retime_srt(source: Path, destination: Path, segments: list[dict[str, Any]]) -> int:
+    """Map source-time SRT cues to the cut timeline, clipping cues at edit boundaries."""
+    raw = source.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    blocks = re.split(r"\n\s*\n", raw.strip()) if raw.strip() else []
+    stamp = re.compile(r"^(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})$")
+    timing = re.compile(r"^(.+?)\s+-->\s+(.+?)(?:\s+.*)?$")
+    def parse(value: str) -> float:
+        found = stamp.fullmatch(value.strip())
+        if not found:
+            raise PipelineError(f"Unsupported SRT timestamp: {value}")
+        h, m, sec, ms = map(int, found.groups())
+        return h * 3600 + m * 60 + sec + ms / 1000
+    def format_time(value: float) -> str:
+        ms = max(0, round(value * 1000))
+        h, ms = divmod(ms, 3600000)
+        m, ms = divmod(ms, 60000)
+        sec, ms = divmod(ms, 1000)
+        return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+    output: list[str] = []
+    cumulative: list[tuple[float, float, float]] = []
+    offset = 0.0
+    for segment in segments:
+        a, b = float(segment["source_in"]), float(segment["source_out"])
+        cumulative.append((a, b, offset))
+        offset += b - a
+    for block in blocks:
+        lines = block.splitlines()
+        index = 1 if lines and lines[0].strip().isdigit() else 0
+        if len(lines) <= index:
+            raise PipelineError("Invalid SRT cue with no timestamp")
+        match = timing.fullmatch(lines[index].strip())
+        if not match:
+            raise PipelineError(f"Invalid SRT cue: {lines[index]}")
+        a, b = parse(match.group(1)), parse(match.group(2))
+        if b <= a:
+            raise PipelineError("SRT cue end must follow start")
+        text = "\n".join(lines[index + 1:])
+        if not text.strip():
+            continue
+        for seg_a, seg_b, start in cumulative:
+            lo, hi = max(a, seg_a), min(b, seg_b)
+            if hi - lo < 0.02:
+                continue
+            cue_a, cue_b = start + lo - seg_a, start + hi - seg_a
+            output.append(f"{len(output)+1}\n{format_time(cue_a)} --> {format_time(cue_b)}\n{text}")
+    destination.write_text("\n\n".join(output) + ("\n" if output else ""), encoding="utf-8")
+    return len(output)
+
+
 def cmd_render(args: argparse.Namespace) -> None:
     project = Path(args.project).expanduser().resolve()
     config = project_config(project)
@@ -462,10 +517,17 @@ def cmd_render(args: argparse.Namespace) -> None:
     output = plan["output"]
     width, height, fps = int(output["width"]), int(output["height"]), float(output["fps"])
     out = project / ("preview.mp4" if args.preview else "master.mp4")
+    # Captions in a source transcript do not match the edited timeline after cuts.
+    render_plan = dict(plan)
+    captions = plan.get("captions") or {}
+    if captions.get("path") and resolve(project, captions["path"]).is_file():
+        edited_srt = project / "edited_transcript.srt"
+        retime_srt(resolve(project, captions["path"]), edited_srt, plan["segments"])
+        render_plan["captions"] = dict(captions, path=str(edited_srt))
     with tempfile.TemporaryDirectory(prefix="pve-") as tmp:
         base = Path(tmp) / "cut.mov"
         cut_cmd = create_cut_mezzanine(source, plan, base, width, height, fps)
-        finish_cmd = create_presentation(project, base, plan, out, duration, args.preview)
+        finish_cmd = create_presentation(project, base, render_plan, out, duration, args.preview)
     manifest = {
         "pipeline_version": VERSION,
         "source": str(source),
@@ -475,7 +537,7 @@ def cmd_render(args: argparse.Namespace) -> None:
         "duration": duration,
         "stages": [cut_cmd, finish_cmd],
     }
-    write_json(project / "render_manifest.json", manifest)
+    write_json(project / ("preview_manifest.json" if args.preview else "render_manifest.json"), manifest)
     print(f"Rendered {out}")
 
 
