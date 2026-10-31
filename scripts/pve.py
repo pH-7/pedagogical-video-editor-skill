@@ -458,10 +458,10 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
 
 def retime_srt(source: Path, destination: Path, segments: list[dict[str, Any]]) -> int:
     """Map source-time SRT cues to the cut timeline, clipping cues at edit boundaries."""
-    raw = source.read_text(encoding="utf-8-sig").replace("\\r\\n", "\\n")
-    blocks = re.split(r"\\n\\s*\\n", raw.strip()) if raw.strip() else []
-    stamp = re.compile(r"^(\\d{2}):(\\d{2}):(\\d{2})[,\\.](\\d{3})$")
-    timing = re.compile(r"^(.+?)\\s+-->\\s+(.+?)(?:\\s+.*)?$")
+    raw = source.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    blocks = re.split(r"\n\s*\n", raw.strip()) if raw.strip() else []
+    stamp = re.compile(r"^(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})$")
+    timing = re.compile(r"^(.+?)\s+-->\s+(.+?)(?:\s+.*)?$")
     def parse(value: str) -> float:
         found = stamp.fullmatch(value.strip())
         if not found:
@@ -492,7 +492,7 @@ def retime_srt(source: Path, destination: Path, segments: list[dict[str, Any]]) 
         a, b = parse(match.group(1)), parse(match.group(2))
         if b <= a:
             raise PipelineError("SRT cue end must follow start")
-        text = "\\n".join(lines[index + 1:])
+        text = "\n".join(lines[index + 1:])
         if not text.strip():
             continue
         for seg_a, seg_b, start in cumulative:
@@ -500,8 +500,8 @@ def retime_srt(source: Path, destination: Path, segments: list[dict[str, Any]]) 
             if hi - lo < 0.02:
                 continue
             cue_a, cue_b = start + lo - seg_a, start + hi - seg_a
-            output.append(f"{len(output)+1}\\n{format_time(cue_a)} --> {format_time(cue_b)}\\n{text}")
-    destination.write_text("\\n\\n".join(output) + ("\\n" if output else ""), encoding="utf-8")
+            output.append(f"{len(output)+1}\n{format_time(cue_a)} --> {format_time(cue_b)}\n{text}")
+    destination.write_text("\n\n".join(output) + ("\n" if output else ""), encoding="utf-8")
     return len(output)
 
 
