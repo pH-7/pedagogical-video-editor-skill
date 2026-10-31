@@ -39,8 +39,8 @@ def main() -> int:
             plan["cards"] = [{"start": 2.0, "end": 3.2, "text": "Idée clé : tester", "position": "lower", "reason": "test French"}]
         # Source-time captions must be remapped when footage is cut.
         (project / "transcript.srt").write_text(
-            "1\\n00:00:00,500 --> 00:00:01,300\\nBonjour\\n\\n"
-            "2\\n00:00:02,500 --> 00:00:03,500\\nUne idée clé\\n",
+            "1\n00:00:00,500 --> 00:00:01,300\nBonjour\n\n"
+            "2\n00:00:02,500 --> 00:00:03,500\nUne idée clé\n",
             encoding="utf-8",
         )
         plan["captions"]["burn_in"] = " subtitles " in filters
