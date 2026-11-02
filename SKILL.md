@@ -29,6 +29,18 @@ Build an intelligible, human-reviewable edit. Treat the included pipeline as det
 - For French, preserve accents, apostrophes, punctuation, speaker register, and appropriate line breaks. Do not translate unless requested.
 - Analyse reference material by measurable traits such as pause handling, shot length, density of visual aids, caption treatment, and audio dynamics. Do not reproduce logos, signature graphics, music, wording, or a living creator's recognisable style.
 
+## Pacing and style presets
+
+Default to **balanced** unless the user provides a visual identity or asks for more energy.
+
+- **Calm:** longer shots, sparse motion and sound cues, more room to reflect.
+- **Balanced:** purposeful zooms, relevant cutaways, gentle changes between learning beats, restrained audio accents.
+- **Dynamic:** stronger visual variety for tutorials and explainers, but never add motion or sound simply to fill silence.
+
+For videos over ten minutes, map the teaching arc before editing: introduction, key concepts, demonstration or example, application, and recap. Review pacing section by section so the middle of the video stays engaging. A visual change should follow a learning need: new idea, example, contrast, diagram or evidence. Vary shot duration naturally rather than following arbitrary retention timers.
+
+When the user requests punch-ins or sound cues, make those deliberate events in the edit plan. Prefer short, licensed sound effects and avoid stacking them on every transition. The renderer applies a smooth zoom-in-and-back movement for each zoom event; set its start, end, scale, and focal coordinates explicitly. Text cards should not obscure faces, demonstrations, or subtitles.
+
 ## Plan and pipeline
 
 Read [plan-schema.md](references/plan-schema.md) before making non-trivial edits. The starter plan is intentionally conservative. Update it from semantic analysis of the transcript and footage.
