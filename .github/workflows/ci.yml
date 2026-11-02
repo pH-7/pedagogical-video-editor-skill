@@ -17,7 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compile Python files
-        run: python3 -m compileall -q scripts
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m compileall -q scripts 2>&1 | tee syntax.log
+      - name: Upload syntax diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-syntax-log
+          path: syntax.log
+          if-no-files-found: warn
 
   smoke:
     name: Synthetic video render
