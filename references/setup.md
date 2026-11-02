@@ -18,7 +18,7 @@ Some minimal FFmpeg builds omit `drawtext` and `subtitles`. The doctor reports t
 
 ## Install the skill
 
-Unzip the package. Copy the `pedagogical-video-editor` folder into the Codex skills directory, normally `~/.codex/skills/`, then restart Codex. Keep the folder name unchanged. Invoke it with `$pedagogical-video-editor` or ask Codex to edit an educational video.
+Unzip the package. Copy the `pedagogical-video-editor` folder into the Codex skills directory, normally `~/.agents/skills/`, then restart Codex. Keep the folder name unchanged. Invoke it with `$pedagogical-video-editor` or ask Codex to edit an educational video.
 
 ## Supplying footage
 
