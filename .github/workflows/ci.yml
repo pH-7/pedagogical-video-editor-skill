@@ -10,6 +10,22 @@ permissions:
   contents: read
 
 jobs:
+  runner:
+    name: Runner availability
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Minimal runner check
+        run: echo "GitHub Actions runner available"
+
+  checkout:
+    name: Repository checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: test -f scripts/pve.py
+
   syntax:
     name: Python syntax
     runs-on: ubuntu-latest
