@@ -427,12 +427,23 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
         card_file.write_text(str(card["text"]), encoding="utf-8")
         enable = f"between(t,{float(card['start'])},{float(card['end'])})"
         position = card.get("position", "lower")
-        y = "h*0.76" if position == "lower" else ("h*0.14" if position == "upper" else "(h-text_h)/2")
+        card_height = max(54, int(height * 0.12))
+        card_offset = max(12, int(card_height * 0.2))
+        if position == "upper":
+            text_y, box_y = "h*0.14", "ih*0.14"
+        elif position == "lower":
+            # Keep explanatory cards clear of bottom-centred subtitles.
+            anchor = 0.48 if captions.get("burn_in") else 0.72
+            text_y, box_y = f"h*{anchor}", f"ih*{anchor}"
+        else:
+            text_y, box_y = "(h-text_h)/2", "ih*0.46"
         nxt = f"card{i}"
         filters.append(
-            f"[{current}]drawbox=x=iw*0.08:y={y.replace('h*', 'ih*')}-24:w=iw*0.84:h=96:color=black@0.68:t=fill:enable='{enable}',"
+            f"[{current}]drawbox=x=iw*0.08:y={box_y}-{card_offset}:"
+            f"w=iw*0.84:h={card_height}:color=black@0.68:t=fill:enable='{enable}',"
             f"drawtext=fontfile='{ffmpeg_filter_path(Path(font))}':textfile='{ffmpeg_filter_path(card_file)}':"
-            f"fontcolor=white:fontsize={max(24, int(height * 0.038))}:x=(w-text_w)/2:y={y}:enable='{enable}'[{nxt}]"
+            f"fontcolor=white:fontsize={max(18, int(height * 0.038))}:"
+            f"x=(w-text_w)/2:y={text_y}:enable='{enable}'[{nxt}]"
         )
         current = nxt
 
