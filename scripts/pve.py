@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from fractions import Fraction
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
@@ -608,9 +609,18 @@ def cmd_qc(args: argparse.Namespace) -> None:
     print(json.dumps({"report": str(project / "qc_report.json"), "status": report["status"], "checks": checks}, indent=2))
 
 
+def fps_fraction(fps: float) -> Fraction:
+    """Preserve common fractional video rates in FCPXML timestamps."""
+    for rate in (Fraction(24000, 1001), Fraction(30000, 1001), Fraction(60000, 1001)):
+        if abs(fps - float(rate)) < 0.002:
+            return rate
+    return Fraction(str(fps)).limit_denominator(100000)
+
+
 def seconds_fraction(value: float, fps: float) -> str:
-    frames = round(value * fps)
-    return f"{frames}/{round(fps)}s"
+    rate = fps_fraction(fps)
+    frames = round(value * float(rate))
+    return f"{frames * rate.denominator}/{rate.numerator}s"
 
 
 def cmd_fcpxml(args: argparse.Namespace) -> None:
@@ -621,7 +631,8 @@ def cmd_fcpxml(args: argparse.Namespace) -> None:
     plan = read_json(project / "edit_plan.json")
     validate_plan(project, plan, info)
     fps = float(plan["output"]["fps"])
-    frame_duration = f"1/{round(fps)}s"
+    rate = fps_fraction(fps)
+    frame_duration = f"{rate.denominator}/{rate.numerator}s"
     width, height = int(plan["output"]["width"]), int(plan["output"]["height"])
     clips = []
     offset = 0.0
