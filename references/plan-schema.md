@@ -21,4 +21,4 @@ Times are seconds on the original source for `segments`, and seconds on the edit
 
 The renderer accepts PNG/JPEG still visuals. Use transparent PNG for diagrams and labels. It uses the installed font for cards and the FFmpeg subtitle renderer for burn-in captions. Keep paths relative to the project where possible.
 
-The generated starter plan retains the full source and proposes restrained zooms only. Codex should change it after semantic review; do not call the starter plan an intelligent final edit.
+The generated starter plan retains the full source with no effects. Codex should change it after semantic review; do not call the starter plan an intelligent final edit.
