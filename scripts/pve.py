@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from fractions import Fraction
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
@@ -253,6 +254,11 @@ def validate_plan(project: Path, plan: dict[str, Any], source_info: dict[str, An
     segments = plan.get("segments")
     if not isinstance(segments, list) or not segments:
         raise PipelineError("Plan needs at least one segment")
+    output = plan.get("output", {})
+    if not all(isinstance(output.get(k), (int, float)) and output[k] > 0 for k in ("width", "height", "fps")):
+        raise PipelineError("Output width, height, and fps must be positive numbers")
+    if int(output["width"]) % 2 or int(output["height"]) % 2:
+        raise PipelineError("Output width and height must be even for H.264 yuv420p")
     previous = -1.0
     total = 0.0
     for i, seg in enumerate(segments):
@@ -273,6 +279,11 @@ def validate_plan(project: Path, plan: dict[str, Any], source_info: dict[str, An
     for zoom in plan.get("zooms", []):
         if not 1.0 <= float(zoom["scale"]) <= 1.5:
             raise PipelineError(f"Zoom scale outside safe renderer range: {zoom}")
+        if float(zoom["end"]) <= float(zoom["start"]):
+            raise PipelineError(f"Zoom must have positive duration: {zoom}")
+        for axis in ("x", "y"):
+            if not 0.0 <= float(zoom.get(axis, 0.5)) <= 1.0:
+                raise PipelineError(f"Zoom focal point {axis} must be between 0 and 1: {zoom}")
     for group in ("visuals", "sound_effects"):
         for event in plan.get(group, []):
             path = resolve(project, event["path"])
@@ -301,12 +312,26 @@ def locate_font() -> str | None:
 
 
 def zoom_expression(events: list[dict[str, Any]], fps: float) -> str:
+    """Ease each zoom in and back out within its planned time span."""
     expr = "1"
     for event in reversed(events):
         start = round(float(event["start"]) * fps)
         end = round(float(event["end"]) * fps)
+        if end <= start:
+            raise PipelineError("Zoom must span at least one output frame")
         scale = float(event["scale"])
-        expr = f"if(between(on\\,{start}\\,{end})\\,{scale:.5f}\\,{expr})"
+        bump = f"1+({scale:.5f}-1)*pow(sin(PI*(on-{start})/({end}-{start}))\\,2)"
+        expr = f"if(between(on\\,{start}\\,{end})\\,{bump}\\,{expr})"
+    return expr
+
+
+def zoom_focal_expression(events: list[dict[str, Any]], fps: float, axis: str) -> str:
+    expr = "0.5"
+    for event in reversed(events):
+        start = round(float(event["start"]) * fps)
+        end = round(float(event["end"]) * fps)
+        value = float(event.get(axis, 0.5))
+        expr = f"if(between(on\\,{start}\\,{end})\\,{value:.5f}\\,{expr})"
     return expr
 
 
@@ -368,8 +393,12 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
     zooms = plan.get("zooms", [])
     if zooms:
         z = zoom_expression(zooms, fps)
+        fx = zoom_focal_expression(zooms, fps, "x")
+        fy = zoom_focal_expression(zooms, fps, "y")
         filters.append(
-            f"[0:v]zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"[0:v]zoompan=z='{z}':"
+            f"x='max(0,min(iw-iw/zoom,iw*({fx})-iw/(2*zoom)))':"
+            f"y='max(0,min(ih-ih/zoom,ih*({fy})-ih/(2*zoom)))':"
             f"d=1:s={width}x{height}:fps={fps}[{current}]"
         )
     else:
@@ -398,12 +427,23 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
         card_file.write_text(str(card["text"]), encoding="utf-8")
         enable = f"between(t,{float(card['start'])},{float(card['end'])})"
         position = card.get("position", "lower")
-        y = "h*0.76" if position == "lower" else ("h*0.14" if position == "upper" else "(h-text_h)/2")
+        card_height = max(54, int(height * 0.12))
+        card_offset = max(12, int(card_height * 0.2))
+        if position == "upper":
+            text_y, box_y = "h*0.14", "ih*0.14"
+        elif position == "lower":
+            # Keep explanatory cards clear of bottom-centred subtitles.
+            anchor = 0.48 if captions.get("burn_in") else 0.72
+            text_y, box_y = f"h*{anchor}", f"ih*{anchor}"
+        else:
+            text_y, box_y = "(h-text_h)/2", "ih*0.46"
         nxt = f"card{i}"
         filters.append(
-            f"[{current}]drawbox=x=w*0.08:y={y}-24:w=w*0.84:h=96:color=black@0.68:t=fill:enable='{enable}',"
+            f"[{current}]drawbox=x=iw*0.08:y={box_y}-{card_offset}:"
+            f"w=iw*0.84:h={card_height}:color=black@0.68:t=fill:enable='{enable}',"
             f"drawtext=fontfile='{ffmpeg_filter_path(Path(font))}':textfile='{ffmpeg_filter_path(card_file)}':"
-            f"fontcolor=white:fontsize={max(24, int(height * 0.038))}:x=(w-text_w)/2:y={y}:enable='{enable}'[{nxt}]"
+            f"fontcolor=white:fontsize={max(18, int(height * 0.038))}:"
+            f"x=(w-text_w)/2:y={text_y}:enable='{enable}'[{nxt}]"
         )
         current = nxt
 
@@ -450,6 +490,56 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
     return cmd
 
 
+
+def retime_srt(source: Path, destination: Path, segments: list[dict[str, Any]]) -> int:
+    """Map source-time SRT cues to the cut timeline, clipping cues at edit boundaries."""
+    raw = source.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    blocks = re.split(r"\n\s*\n", raw.strip()) if raw.strip() else []
+    stamp = re.compile(r"^(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})$")
+    timing = re.compile(r"^(.+?)\s+-->\s+(.+?)(?:\s+.*)?$")
+    def parse(value: str) -> float:
+        found = stamp.fullmatch(value.strip())
+        if not found:
+            raise PipelineError(f"Unsupported SRT timestamp: {value}")
+        h, m, sec, ms = map(int, found.groups())
+        return h * 3600 + m * 60 + sec + ms / 1000
+    def format_time(value: float) -> str:
+        ms = max(0, round(value * 1000))
+        h, ms = divmod(ms, 3600000)
+        m, ms = divmod(ms, 60000)
+        sec, ms = divmod(ms, 1000)
+        return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+    output: list[str] = []
+    cumulative: list[tuple[float, float, float]] = []
+    offset = 0.0
+    for segment in segments:
+        a, b = float(segment["source_in"]), float(segment["source_out"])
+        cumulative.append((a, b, offset))
+        offset += b - a
+    for block in blocks:
+        lines = block.splitlines()
+        index = 1 if lines and lines[0].strip().isdigit() else 0
+        if len(lines) <= index:
+            raise PipelineError("Invalid SRT cue with no timestamp")
+        match = timing.fullmatch(lines[index].strip())
+        if not match:
+            raise PipelineError(f"Invalid SRT cue: {lines[index]}")
+        a, b = parse(match.group(1)), parse(match.group(2))
+        if b <= a:
+            raise PipelineError("SRT cue end must follow start")
+        text = "\n".join(lines[index + 1:])
+        if not text.strip():
+            continue
+        for seg_a, seg_b, start in cumulative:
+            lo, hi = max(a, seg_a), min(b, seg_b)
+            if hi - lo < 0.02:
+                continue
+            cue_a, cue_b = start + lo - seg_a, start + hi - seg_a
+            output.append(f"{len(output)+1}\n{format_time(cue_a)} --> {format_time(cue_b)}\n{text}")
+    destination.write_text("\n\n".join(output) + ("\n" if output else ""), encoding="utf-8")
+    return len(output)
+
+
 def cmd_render(args: argparse.Namespace) -> None:
     project = Path(args.project).expanduser().resolve()
     config = project_config(project)
@@ -462,10 +552,17 @@ def cmd_render(args: argparse.Namespace) -> None:
     output = plan["output"]
     width, height, fps = int(output["width"]), int(output["height"]), float(output["fps"])
     out = project / ("preview.mp4" if args.preview else "master.mp4")
+    # Captions in a source transcript do not match the edited timeline after cuts.
+    render_plan = dict(plan)
+    captions = plan.get("captions") or {}
+    if captions.get("path") and resolve(project, captions["path"]).is_file():
+        edited_srt = project / "edited_transcript.srt"
+        retime_srt(resolve(project, captions["path"]), edited_srt, plan["segments"])
+        render_plan["captions"] = dict(captions, path=str(edited_srt))
     with tempfile.TemporaryDirectory(prefix="pve-") as tmp:
         base = Path(tmp) / "cut.mov"
         cut_cmd = create_cut_mezzanine(source, plan, base, width, height, fps)
-        finish_cmd = create_presentation(project, base, plan, out, duration, args.preview)
+        finish_cmd = create_presentation(project, base, render_plan, out, duration, args.preview)
     manifest = {
         "pipeline_version": VERSION,
         "source": str(source),
@@ -475,7 +572,7 @@ def cmd_render(args: argparse.Namespace) -> None:
         "duration": duration,
         "stages": [cut_cmd, finish_cmd],
     }
-    write_json(project / "render_manifest.json", manifest)
+    write_json(project / ("preview_manifest.json" if args.preview else "render_manifest.json"), manifest)
     print(f"Rendered {out}")
 
 
@@ -523,9 +620,18 @@ def cmd_qc(args: argparse.Namespace) -> None:
     print(json.dumps({"report": str(project / "qc_report.json"), "status": report["status"], "checks": checks}, indent=2))
 
 
+def fps_fraction(fps: float) -> Fraction:
+    """Preserve common fractional video rates in FCPXML timestamps."""
+    for rate in (Fraction(24000, 1001), Fraction(30000, 1001), Fraction(60000, 1001)):
+        if abs(fps - float(rate)) < 0.002:
+            return rate
+    return Fraction(str(fps)).limit_denominator(100000)
+
+
 def seconds_fraction(value: float, fps: float) -> str:
-    frames = round(value * fps)
-    return f"{frames}/{round(fps)}s"
+    rate = fps_fraction(fps)
+    frames = round(value * float(rate))
+    return f"{frames * rate.denominator}/{rate.numerator}s"
 
 
 def cmd_fcpxml(args: argparse.Namespace) -> None:
@@ -536,7 +642,8 @@ def cmd_fcpxml(args: argparse.Namespace) -> None:
     plan = read_json(project / "edit_plan.json")
     validate_plan(project, plan, info)
     fps = float(plan["output"]["fps"])
-    frame_duration = f"1/{round(fps)}s"
+    rate = fps_fraction(fps)
+    frame_duration = f"{rate.denominator}/{rate.numerator}s"
     width, height = int(plan["output"]["width"]), int(plan["output"]["height"])
     clips = []
     offset = 0.0

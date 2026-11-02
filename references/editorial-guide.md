@@ -16,7 +16,7 @@ Use visual change when it helps the viewer encode or retrieve information. Talki
 
 ## Zooms
 
-Use `zoom` events for emphasis or reframing. Typical talking-head values are 1.04–1.10 over 0.4–1.2 seconds, held briefly, then returned in a later event. Stronger values require sufficient source resolution and a clear reason. Check eyes, hands, captions, and diagrams remain in frame.
+Use `zoom` events for emphasis or reframing. The renderer eases from neutral to the specified scale and back to neutral over each event. For talking-head footage, favour 1.04–1.10 and allow enough duration (typically 0.8–2 seconds) for the motion to be perceptible but not distracting. Set normalised `x` and `y` to keep the speaker's eyes or the relevant content in view. Stronger values require sufficient source resolution and a clear reason. Check eyes, hands, captions, and diagrams remain in frame.
 
 ## Captions and French
 
