@@ -406,7 +406,7 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
         y = "h*0.76" if position == "lower" else ("h*0.14" if position == "upper" else "(h-text_h)/2")
         nxt = f"card{i}"
         filters.append(
-            f"[{current}]drawbox=x=w*0.08:y={y}-24:w=w*0.84:h=96:color=black@0.68:t=fill:enable='{enable}',"
+            f"[{current}]drawbox=x=iw*0.08:y={y.replace('h*', 'ih*')}-24:w=iw*0.84:h=96:color=black@0.68:t=fill:enable='{enable}',"
             f"drawtext=fontfile='{ffmpeg_filter_path(Path(font))}':textfile='{ffmpeg_filter_path(card_file)}':"
             f"fontcolor=white:fontsize={max(24, int(height * 0.038))}:x=(w-text_w)/2:y={y}:enable='{enable}'[{nxt}]"
         )
