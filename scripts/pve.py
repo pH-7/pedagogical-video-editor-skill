@@ -278,6 +278,11 @@ def validate_plan(project: Path, plan: dict[str, Any], source_info: dict[str, An
     for zoom in plan.get("zooms", []):
         if not 1.0 <= float(zoom["scale"]) <= 1.5:
             raise PipelineError(f"Zoom scale outside safe renderer range: {zoom}")
+        if float(zoom["end"]) <= float(zoom["start"]):
+            raise PipelineError(f"Zoom must have positive duration: {zoom}")
+        for axis in ("x", "y"):
+            if not 0.0 <= float(zoom.get(axis, 0.5)) <= 1.0:
+                raise PipelineError(f"Zoom focal point {axis} must be between 0 and 1: {zoom}")
     for group in ("visuals", "sound_effects"):
         for event in plan.get(group, []):
             path = resolve(project, event["path"])
@@ -306,12 +311,26 @@ def locate_font() -> str | None:
 
 
 def zoom_expression(events: list[dict[str, Any]], fps: float) -> str:
+    """Ease each zoom in and back out within its planned time span."""
     expr = "1"
     for event in reversed(events):
         start = round(float(event["start"]) * fps)
         end = round(float(event["end"]) * fps)
+        if end <= start:
+            raise PipelineError("Zoom must span at least one output frame")
         scale = float(event["scale"])
-        expr = f"if(between(on\\,{start}\\,{end})\\,{scale:.5f}\\,{expr})"
+        bump = f"1+({scale:.5f}-1)*pow(sin(PI*(on-{start})/({end}-{start}))\\,2)"
+        expr = f"if(between(on\\,{start}\\,{end})\\,{bump}\\,{expr})"
+    return expr
+
+
+def zoom_focal_expression(events: list[dict[str, Any]], fps: float, axis: str) -> str:
+    expr = "0.5"
+    for event in reversed(events):
+        start = round(float(event["start"]) * fps)
+        end = round(float(event["end"]) * fps)
+        value = float(event.get(axis, 0.5))
+        expr = f"if(between(on\\,{start}\\,{end})\\,{value:.5f}\\,{expr})"
     return expr
 
 
@@ -373,8 +392,12 @@ def create_presentation(project: Path, base: Path, plan: dict[str, Any], out: Pa
     zooms = plan.get("zooms", [])
     if zooms:
         z = zoom_expression(zooms, fps)
+        fx = zoom_focal_expression(zooms, fps, "x")
+        fy = zoom_focal_expression(zooms, fps, "y")
         filters.append(
-            f"[0:v]zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"[0:v]zoompan=z='{z}':"
+            f"x='max(0,min(iw-iw/zoom,iw*({fx})-iw/(2*zoom)))':"
+            f"y='max(0,min(ih-ih/zoom,ih*({fy})-ih/(2*zoom)))':"
             f"d=1:s={width}x{height}:fps={fps}[{current}]"
         )
     else:
