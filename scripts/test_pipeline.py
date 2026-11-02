@@ -2,6 +2,8 @@
 """Small end-to-end smoke test using synthetic media."""
 
 import json
+import struct
+import zlib
 import subprocess
 import sys
 import tempfile
@@ -43,6 +45,28 @@ def main() -> int:
             "2\n00:00:02,500 --> 00:00:03,500\nUne idée clé\n",
             encoding="utf-8",
         )
+        # Exercise overlays, music and SFX without third-party media files.
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+
+        pixels = (b"\x00" + bytes((50, 180, 245)) * 16) * 16
+        png = (b"\x89PNG\r\n\x1a\n"
+               + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(pixels))
+               + chunk(b"IEND", b""))
+        (project / "diagram.png").write_bytes(png)
+        call("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "sine=frequency=320:duration=4",
+             "-c:a", "pcm_s16le", str(project / "music.wav"))
+        call("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "sine=frequency=900:duration=0.2",
+             "-c:a", "pcm_s16le", str(project / "sfx.wav"))
+        plan["visuals"] = [{"start": 0.8, "end": 1.6, "path": "diagram.png",
+                            "position": "right", "width_fraction": 0.25,
+                            "reason": "test explanatory overlay"}]
+        plan["music"] = {"path": "music.wav", "gain_db": -28, "start": 0, "end": 3.7}
+        plan["sound_effects"] = [{"start": 1, "path": "sfx.wav", "gain_db": -20,
+                                   "reason": "test cue"}]
         plan["captions"]["burn_in"] = " subtitles " in filters
         plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
         call(sys.executable, str(script), "render", "--project", str(project))
